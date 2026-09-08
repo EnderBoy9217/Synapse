@@ -4584,6 +4584,7 @@ export default function ChatPage() {
           <InfoTooltip
             content="Sources"
             hideIcon
+            side="left"
             className="info-tooltip-wrapper--chat-sources"
           >
             <button
@@ -4602,6 +4603,7 @@ export default function ChatPage() {
         <InfoTooltip
           content={isSearchOpen ? 'Close search (Esc)' : 'Search chat (Ctrl+F)'}
           hideIcon
+          side="left"
           className={`info-tooltip-wrapper--chat-search${showSourcesButton ? ' info-tooltip-wrapper--chat-search--with-sources' : ''}`}
         >
           <button
@@ -4621,6 +4623,7 @@ export default function ChatPage() {
         <InfoTooltip
           content="Sessions"
           hideIcon
+          side="right"
           className="info-tooltip-wrapper--chat-sessions"
         >
           <button
@@ -4637,6 +4640,7 @@ export default function ChatPage() {
         <InfoTooltip
           content="New Session"
           hideIcon
+          side="right"
           className="info-tooltip-wrapper--chat-sessions-new"
         >
           <button
