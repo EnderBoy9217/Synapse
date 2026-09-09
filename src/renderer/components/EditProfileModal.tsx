@@ -1,6 +1,7 @@
 import {
   useState,
   useEffect,
+  useMemo,
   useRef,
   useCallback,
   MouseEvent,
@@ -8,6 +9,7 @@ import {
 } from 'react';
 import {
   X,
+  Search,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
@@ -240,6 +242,798 @@ function buildBreadcrumb(page: string): Array<{ key: string; label: string }> {
     current = info.parent;
   }
   return crumbs;
+}
+
+// ── Search ──
+
+interface SearchIndexEntry {
+  id: string;
+  label: string;
+  keywords: string[];
+  page: string;
+  categoryId?: string;
+}
+
+interface ScoredSearchResult extends SearchIndexEntry {
+  score: number;
+}
+
+// Static index: every settable field / card / page. Labels match the UI text.
+const SEARCH_INDEX: SearchIndexEntry[] = [
+  // main
+  {
+    id: 'main:profile-name',
+    label: 'Profile Name',
+    keywords: ['name', 'title'],
+    page: 'main',
+  },
+  {
+    id: 'main:model',
+    label: 'Model',
+    keywords: ['model', 'weights', 'gguf'],
+    page: 'main',
+  },
+  {
+    id: 'main:projector-card',
+    label: 'Projector',
+    keywords: ['projector', 'mmproj', 'vision', 'image model'],
+    page: 'main',
+  },
+  {
+    id: 'main:performance-card',
+    label: 'Performance',
+    keywords: ['performance', 'gpu', 'vram', 'speed', 'optimization'],
+    page: 'main',
+  },
+  {
+    id: 'main:system-prompt-card',
+    label: 'System Prompt',
+    keywords: ['system prompt', 'persona', 'instructions', 'behavior'],
+    page: 'main',
+  },
+  {
+    id: 'main:tools-card',
+    label: 'Tools',
+    keywords: ['tools', 'extensions', 'function calling'],
+    page: 'main',
+  },
+  {
+    id: 'main:advanced-card',
+    label: 'Advanced Parameters',
+    keywords: ['advanced', 'sampling', 'temperature'],
+    page: 'main',
+  },
+  {
+    id: 'main:server-card',
+    label: 'Server Settings',
+    keywords: ['server', 'host', 'port', 'launch'],
+    page: 'main',
+  },
+  // system-prompt
+  {
+    id: 'system-prompt:page',
+    label: 'System Prompt',
+    keywords: ['system prompt', 'persona', 'instructions'],
+    page: 'system-prompt',
+  },
+  // tools
+  {
+    id: 'tools:page',
+    label: 'Tools',
+    keywords: ['tools', 'extensions', 'file', 'web search'],
+    page: 'tools',
+  },
+  // advanced
+  {
+    id: 'advanced:page',
+    label: 'Advanced Parameters',
+    keywords: ['advanced', 'sampling'],
+    page: 'advanced',
+  },
+  {
+    id: 'advanced:temperature',
+    label: 'Temperature',
+    keywords: ['temperature', 'temp', 'sampling', 'creativity'],
+    page: 'advanced',
+  },
+  {
+    id: 'advanced:top-k',
+    label: 'Top K',
+    keywords: ['top k', 'topk', 'sampling'],
+    page: 'advanced',
+  },
+  {
+    id: 'advanced:top-p',
+    label: 'Top P',
+    keywords: ['top p', 'topp', 'nucleus', 'sampling'],
+    page: 'advanced',
+  },
+  {
+    id: 'advanced:min-p',
+    label: 'Min P',
+    keywords: ['min p', 'minp', 'sampling'],
+    page: 'advanced',
+  },
+  {
+    id: 'advanced:repeat-card',
+    label: 'Repeat Penalty',
+    keywords: ['repeat', 'penalty', 'repetition'],
+    page: 'advanced',
+  },
+  {
+    id: 'advanced:samplers-card',
+    label: 'Advanced Samplers',
+    keywords: ['samplers', 'seed', 'xtc', 'typical'],
+    page: 'advanced',
+  },
+  // repeat-penalty
+  {
+    id: 'repeat-penalty:page',
+    label: 'Repeat Penalty',
+    keywords: ['repeat', 'penalty'],
+    page: 'repeat-penalty',
+  },
+  {
+    id: 'repeat-penalty:enabled',
+    label: 'Repeat Penalty Enabled',
+    keywords: ['repeat', 'enabled', 'toggle'],
+    page: 'repeat-penalty',
+  },
+  {
+    id: 'repeat-penalty:last-tokens',
+    label: 'Last Tokens',
+    keywords: ['last tokens', 'repeat', 'window'],
+    page: 'repeat-penalty',
+  },
+  {
+    id: 'repeat-penalty:penalty',
+    label: 'Repeat Penalty Value',
+    keywords: ['penalty', 'repeat'],
+    page: 'repeat-penalty',
+  },
+  {
+    id: 'repeat-penalty:frequency',
+    label: 'Frequency Penalty',
+    keywords: ['frequency', 'penalty'],
+    page: 'repeat-penalty',
+  },
+  {
+    id: 'repeat-penalty:presence',
+    label: 'Presence Penalty',
+    keywords: ['presence', 'penalty'],
+    page: 'repeat-penalty',
+  },
+  {
+    id: 'repeat-penalty:dry-enabled',
+    label: 'DRY Enabled',
+    keywords: ['dry', 'enabled', 'repetition'],
+    page: 'repeat-penalty',
+  },
+  {
+    id: 'repeat-penalty:dry-multiplier',
+    label: 'DRY Multiplier',
+    keywords: ['dry', 'multiplier'],
+    page: 'repeat-penalty',
+  },
+  {
+    id: 'repeat-penalty:dry-base',
+    label: 'DRY Base',
+    keywords: ['dry', 'base'],
+    page: 'repeat-penalty',
+  },
+  {
+    id: 'repeat-penalty:dry-allowed-length',
+    label: 'DRY Allowed Length',
+    keywords: ['dry', 'allowed length'],
+    page: 'repeat-penalty',
+  },
+  {
+    id: 'repeat-penalty:dry-penalty-last-n',
+    label: 'DRY Penalty Last N',
+    keywords: ['dry', 'penalty', 'last n'],
+    page: 'repeat-penalty',
+  },
+  {
+    id: 'repeat-penalty:dry-breakers',
+    label: 'Sequence Breakers',
+    keywords: ['dry', 'sequence breakers', 'delimiters'],
+    page: 'repeat-penalty',
+  },
+  // advanced-samplers
+  {
+    id: 'advanced-samplers:page',
+    label: 'Advanced Samplers',
+    keywords: ['samplers', 'advanced'],
+    page: 'advanced-samplers',
+  },
+  {
+    id: 'advanced-samplers:ignore-eos',
+    label: 'Ignore EOS',
+    keywords: ['ignore eos', 'end of stream', 'generation'],
+    page: 'advanced-samplers',
+  },
+  {
+    id: 'advanced-samplers:seed',
+    label: 'Seed',
+    keywords: ['seed', 'random', 'deterministic'],
+    page: 'advanced-samplers',
+  },
+  {
+    id: 'advanced-samplers:typical-p',
+    label: 'Typical P',
+    keywords: ['typical p', 'typical', 'sampling'],
+    page: 'advanced-samplers',
+  },
+  {
+    id: 'advanced-samplers:top-n-sigma',
+    label: 'Top N Sigma',
+    keywords: ['top n sigma', 'sigma', 'sampling'],
+    page: 'advanced-samplers',
+  },
+  {
+    id: 'advanced-samplers:xtc-probability',
+    label: 'XTC Probability',
+    keywords: ['xtc', 'probability', 'sampling'],
+    page: 'advanced-samplers',
+  },
+  {
+    id: 'advanced-samplers:xtc-threshold',
+    label: 'XTC Threshold',
+    keywords: ['xtc', 'threshold', 'sampling'],
+    page: 'advanced-samplers',
+  },
+  // projector
+  {
+    id: 'projector:page',
+    label: 'Projector',
+    keywords: ['projector', 'mmproj', 'vision'],
+    page: 'projector',
+  },
+  {
+    id: 'projector:model',
+    label: 'Projector Model',
+    keywords: ['projector', 'mmproj', 'model file'],
+    page: 'projector',
+  },
+  {
+    id: 'projector:video-card',
+    label: 'Video Settings',
+    keywords: ['video', 'frames', 'fps'],
+    page: 'projector',
+  },
+  {
+    id: 'projector:mmproj-offload',
+    label: 'MMProj GPU Offload',
+    keywords: ['mmproj', 'offload', 'gpu', 'vision'],
+    page: 'projector',
+  },
+  {
+    id: 'projector:image-min-tokens',
+    label: 'Image Min Tokens',
+    keywords: ['image', 'min tokens', 'vision'],
+    page: 'projector',
+  },
+  {
+    id: 'projector:image-max-tokens',
+    label: 'Image Max Tokens',
+    keywords: ['image', 'max tokens', 'vision'],
+    page: 'projector',
+  },
+  {
+    id: 'projector:mtmd-batch',
+    label: 'Batch Max Tokens (MTMD)',
+    keywords: ['mtmd', 'batch', 'tokens', 'multimodal'],
+    page: 'projector',
+  },
+  // video-settings
+  {
+    id: 'video-settings:page',
+    label: 'Video Settings',
+    keywords: ['video', 'frames'],
+    page: 'video-settings',
+  },
+  {
+    id: 'video-settings:unlimited',
+    label: 'Disable Frame Limit',
+    keywords: ['video', 'unlimited', 'frame limit'],
+    page: 'video-settings',
+  },
+  {
+    id: 'video-settings:fps',
+    label: 'Frames Per Second (FPS)',
+    keywords: ['fps', 'frames', 'video'],
+    page: 'video-settings',
+  },
+  {
+    id: 'video-settings:max-frames',
+    label: 'Max Frames',
+    keywords: ['max frames', 'video'],
+    page: 'video-settings',
+  },
+  {
+    id: 'video-settings:quality',
+    label: 'JPEG Quality',
+    keywords: ['quality', 'jpeg', 'video'],
+    page: 'video-settings',
+  },
+  {
+    id: 'video-settings:width',
+    label: 'Max Width',
+    keywords: ['width', 'resolution', 'video'],
+    page: 'video-settings',
+  },
+  // performance
+  {
+    id: 'performance:page',
+    label: 'Performance',
+    keywords: ['performance', 'gpu', 'optimization'],
+    page: 'performance',
+  },
+  {
+    id: 'performance:optimizer',
+    label: 'Optimization Mode',
+    keywords: ['optimization', 'longest context', 'most gpu', 'custom', 'auto'],
+    page: 'performance',
+  },
+  {
+    id: 'performance:memory',
+    label: 'Estimated Memory Usage',
+    keywords: ['memory', 'vram', 'ram', 'estimate'],
+    page: 'performance',
+  },
+  {
+    id: 'performance:gpu-auto',
+    label: 'GPU Layers Auto',
+    keywords: ['gpu layers', 'auto', 'ngl', 'offload'],
+    page: 'performance',
+  },
+  {
+    id: 'performance:gpu-layers',
+    label: 'GPU Layers (NGL)',
+    keywords: ['gpu layers', 'ngl', 'offload'],
+    page: 'performance',
+  },
+  {
+    id: 'performance:context-shift',
+    label: 'Context Shift',
+    keywords: ['context shift', 'kv cache'],
+    page: 'performance',
+  },
+  {
+    id: 'performance:context-size',
+    label: 'Context Length',
+    keywords: ['context', 'ctx', 'context size', 'length'],
+    page: 'performance',
+  },
+  {
+    id: 'performance:cache-card',
+    label: 'Cache Options',
+    keywords: ['cache', 'kv', 'flash attention'],
+    page: 'performance',
+  },
+  {
+    id: 'performance:draft-card',
+    label: 'Draft Model',
+    keywords: ['draft', 'speculative', 'decoding'],
+    page: 'performance',
+  },
+  {
+    id: 'performance:memory-card',
+    label: 'Memory Options',
+    keywords: ['memory', 'mmap', 'mlock'],
+    page: 'performance',
+  },
+  {
+    id: 'performance:moe-card',
+    label: 'Mixture of Experts',
+    keywords: ['moe', 'mixture of experts'],
+    page: 'performance',
+  },
+  // cache-options
+  {
+    id: 'cache-options:page',
+    label: 'Cache Options',
+    keywords: ['cache', 'kv'],
+    page: 'cache-options',
+  },
+  {
+    id: 'cache-options:flash',
+    label: 'Flash Attention',
+    keywords: ['flash attention', 'fa', 'cache'],
+    page: 'cache-options',
+  },
+  {
+    id: 'cache-options:kv-offload',
+    label: 'KV Cache Offload',
+    keywords: ['kv', 'offload', 'cache', 'gpu'],
+    page: 'cache-options',
+  },
+  {
+    id: 'cache-options:k-type',
+    label: 'K Cache Type',
+    keywords: ['k cache', 'quantization', 'cache type'],
+    page: 'cache-options',
+  },
+  {
+    id: 'cache-options:v-type',
+    label: 'V Cache Type',
+    keywords: ['v cache', 'quantization', 'cache type'],
+    page: 'cache-options',
+  },
+  {
+    id: 'cache-options:rope-card',
+    label: 'Context Scaling (RoPE/YaRN)',
+    keywords: ['rope', 'yarn', 'context scaling'],
+    page: 'cache-options',
+  },
+  // memory-options
+  {
+    id: 'memory-options:page',
+    label: 'Memory Options',
+    keywords: ['memory', 'mmap'],
+    page: 'memory-options',
+  },
+  {
+    id: 'memory-options:mmap',
+    label: 'Memory-Mapped (MMAP)',
+    keywords: ['mmap', 'memory mapped'],
+    page: 'memory-options',
+  },
+  {
+    id: 'memory-options:mlock',
+    label: 'MLock (Pin RAM)',
+    keywords: ['mlock', 'pin', 'ram'],
+    page: 'memory-options',
+  },
+  {
+    id: 'memory-options:repack',
+    label: 'Weight Repacking',
+    keywords: ['repack', 'weights'],
+    page: 'memory-options',
+  },
+  // rope-scaling
+  {
+    id: 'rope-scaling:page',
+    label: 'Context Scaling (RoPE/YaRN)',
+    keywords: ['rope', 'yarn', 'context scaling'],
+    page: 'rope-scaling',
+  },
+  {
+    id: 'rope-scaling:method',
+    label: 'RoPE Scaling Method',
+    keywords: ['rope', 'method', 'none', 'linear', 'yarn'],
+    page: 'rope-scaling',
+  },
+  {
+    id: 'rope-scaling:scale',
+    label: 'RoPE Scale Factor',
+    keywords: ['rope', 'scale'],
+    page: 'rope-scaling',
+  },
+  {
+    id: 'rope-scaling:freq-base',
+    label: 'RoPE Freq Base',
+    keywords: ['rope', 'freq base', 'frequency'],
+    page: 'rope-scaling',
+  },
+  {
+    id: 'rope-scaling:freq-scale',
+    label: 'RoPE Freq Scale',
+    keywords: ['rope', 'freq scale', 'frequency'],
+    page: 'rope-scaling',
+  },
+  {
+    id: 'rope-scaling:yarn-orig',
+    label: 'YaRN Original Context',
+    keywords: ['yarn', 'original context'],
+    page: 'rope-scaling',
+  },
+  {
+    id: 'rope-scaling:yarn-ext',
+    label: 'YaRN Extrapolation Factor',
+    keywords: ['yarn', 'extrapolation'],
+    page: 'rope-scaling',
+  },
+  {
+    id: 'rope-scaling:yarn-attn',
+    label: 'YaRN Attention Factor',
+    keywords: ['yarn', 'attention'],
+    page: 'rope-scaling',
+  },
+  {
+    id: 'rope-scaling:yarn-beta-slow',
+    label: 'YaRN Beta Slow',
+    keywords: ['yarn', 'beta slow'],
+    page: 'rope-scaling',
+  },
+  {
+    id: 'rope-scaling:yarn-beta-fast',
+    label: 'YaRN Beta Fast',
+    keywords: ['yarn', 'beta fast'],
+    page: 'rope-scaling',
+  },
+  // draft-model
+  {
+    id: 'draft-model:page',
+    label: 'Draft Model',
+    keywords: ['draft', 'speculative'],
+    page: 'draft-model',
+  },
+  {
+    id: 'draft-model:type',
+    label: 'Draft Type',
+    keywords: ['draft type', 'mtp', 'eagle', 'ngram', 'speculative'],
+    page: 'draft-model',
+  },
+  {
+    id: 'draft-model:model',
+    label: 'External Draft Model',
+    keywords: ['draft model', 'external', 'model file'],
+    page: 'draft-model',
+  },
+  {
+    id: 'draft-model:n-max',
+    label: 'Draft N Max',
+    keywords: ['draft', 'n max'],
+    page: 'draft-model',
+  },
+  {
+    id: 'draft-model:n-min',
+    label: 'Draft N Min',
+    keywords: ['draft', 'n min'],
+    page: 'draft-model',
+  },
+  {
+    id: 'draft-model:p-split',
+    label: 'Draft P Split',
+    keywords: ['draft', 'p split'],
+    page: 'draft-model',
+  },
+  {
+    id: 'draft-model:p-min',
+    label: 'Draft P Min',
+    keywords: ['draft', 'p min'],
+    page: 'draft-model',
+  },
+  // moe-options
+  {
+    id: 'moe-options:page',
+    label: 'Mixture of Experts',
+    keywords: ['moe', 'mixture of experts'],
+    page: 'moe-options',
+  },
+  {
+    id: 'moe-options:cpu-moe',
+    label: 'CPU MoE',
+    keywords: ['cpu moe', 'mixture of experts', 'offload'],
+    page: 'moe-options',
+  },
+  {
+    id: 'moe-options:n-cpu-moe',
+    label: 'N CPU MoE',
+    keywords: ['n cpu moe', 'expert count'],
+    page: 'moe-options',
+  },
+  // server-settings
+  {
+    id: 'server-settings:page',
+    label: 'Server Settings',
+    keywords: ['server', 'host', 'port'],
+    page: 'server-settings',
+  },
+  {
+    id: 'server-settings:manual',
+    label: 'Manual Launch Command',
+    keywords: ['manual', 'launch', 'custom command'],
+    page: 'server-settings',
+  },
+  {
+    id: 'server-settings:host',
+    label: 'Host',
+    keywords: ['host', 'address', 'bind', 'ip'],
+    page: 'server-settings',
+  },
+  {
+    id: 'server-settings:port',
+    label: 'Port',
+    keywords: ['port', 'server'],
+    page: 'server-settings',
+  },
+  {
+    id: 'server-settings:parallel',
+    label: 'Parallel Server Slot Count',
+    keywords: ['parallel', 'slots', 'server'],
+    page: 'server-settings',
+  },
+  {
+    id: 'server-settings:cors-card',
+    label: 'CORS',
+    keywords: ['cors', 'origins', 'browser'],
+    page: 'server-settings',
+  },
+  {
+    id: 'server-settings:flags-card',
+    label: 'Custom Flags',
+    keywords: ['custom flags', 'arguments', 'args'],
+    page: 'server-settings',
+  },
+  {
+    id: 'server-settings:launch-args',
+    label: 'Launch Arguments',
+    keywords: ['launch', 'arguments', 'preview', 'command'],
+    page: 'server-settings',
+  },
+  {
+    id: 'server-settings:launch-cmd',
+    label: 'Launch Command',
+    keywords: ['launch', 'command', 'manual'],
+    page: 'server-settings',
+  },
+  // cors-settings
+  {
+    id: 'cors-settings:page',
+    label: 'CORS',
+    keywords: ['cors', 'browser', 'origins'],
+    page: 'cors-settings',
+  },
+  {
+    id: 'cors-settings:origins',
+    label: 'Allowed Origins',
+    keywords: ['cors', 'origins', 'allowed'],
+    page: 'cors-settings',
+  },
+  {
+    id: 'cors-settings:methods',
+    label: 'Allowed Methods',
+    keywords: ['cors', 'methods', 'allowed'],
+    page: 'cors-settings',
+  },
+  {
+    id: 'cors-settings:headers',
+    label: 'Allowed Headers',
+    keywords: ['cors', 'headers', 'allowed'],
+    page: 'cors-settings',
+  },
+  {
+    id: 'cors-settings:credentials',
+    label: 'Allow Credentials',
+    keywords: ['cors', 'credentials'],
+    page: 'cors-settings',
+  },
+  // custom-flags
+  {
+    id: 'custom-flags:page',
+    label: 'Custom Flags',
+    keywords: ['custom flags', 'arguments'],
+    page: 'custom-flags',
+  },
+];
+
+function normalizeSearchText(s: string): string {
+  return s.toLowerCase().trim();
+}
+
+function isSubsequence(query: string, target: string): boolean {
+  if (!query) return true;
+  let qi = 0;
+  for (let ti = 0; ti < target.length && qi < query.length; ti += 1) {
+    if (target[ti] === query[qi]) qi += 1;
+  }
+  return qi === query.length;
+}
+
+function scoreSearchEntry(entry: SearchIndexEntry, tokens: string[]): number {
+  const label = normalizeSearchText(entry.label);
+  const keywordText = normalizeSearchText(entry.keywords.join(' '));
+  let failed = false;
+  const total = tokens.reduce((sum, rawToken) => {
+    if (failed) return sum;
+    const token = normalizeSearchText(rawToken);
+    if (!token) return sum;
+    let tokenScore = 0;
+    if (label.includes(token)) {
+      tokenScore = 100;
+      if (label.startsWith(token)) tokenScore += 20;
+      else if (label.split(/[\s()/-]+/).some((w) => w.startsWith(token)))
+        tokenScore += 10;
+    } else if (keywordText.includes(token)) {
+      tokenScore = 50;
+    } else if (isSubsequence(token, label.replace(/[^a-z0-9]/g, ''))) {
+      tokenScore = 10;
+    } else if (isSubsequence(token, keywordText.replace(/[^a-z0-9]/g, ''))) {
+      tokenScore = 5;
+    } else {
+      failed = true;
+      return sum;
+    }
+    return sum + tokenScore;
+  }, 0);
+  return failed ? 0 : total;
+}
+
+function searchEntries(
+  entries: SearchIndexEntry[],
+  query: string,
+  limit = 30,
+): ScoredSearchResult[] {
+  const tokens = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return [];
+  return entries
+    .map((entry) => ({ ...entry, score: scoreSearchEntry(entry, tokens) }))
+    .filter((r) => r.score > 0)
+    .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label))
+    .slice(0, limit);
+}
+
+function SearchResultsPage({
+  query,
+  results,
+  onSelect,
+  onClear,
+}: {
+  query: string;
+  results: ScoredSearchResult[];
+  onSelect: (entry: ScoredSearchResult) => void;
+  onClear: () => void;
+}) {
+  if (results.length === 0) {
+    return (
+      <div className="epm-search-empty">
+        <p className="epm-search-empty__title">
+          No settings match &ldquo;{query}&rdquo;
+        </p>
+        <p className="epm-search-empty__hint">
+          Try a different keyword, e.g. temperature, cache, or CORS.
+        </p>
+        <button
+          type="button"
+          className="epm-search-empty__clear"
+          onClick={onClear}
+        >
+          Clear search
+        </button>
+      </div>
+    );
+  }
+  const groups: Array<{ page: string; items: ScoredSearchResult[] }> = [];
+  results.forEach((result) => {
+    const group = groups.find((g) => g.page === result.page);
+    if (group) {
+      group.items.push(result);
+    } else {
+      groups.push({ page: result.page, items: [result] });
+    }
+  });
+  return (
+    <div className="epm-search-results">
+      {groups.map((group) => (
+        <div key={group.page}>
+          <div className="epm-search-group">
+            {BREADCRUMB_MAP[group.page]?.label ?? group.page}
+          </div>
+          {group.items.map((result) => {
+            const trail = buildBreadcrumb(result.page)
+              .map((c) => c.label)
+              .join(' › ');
+            return (
+              <button
+                key={result.id}
+                type="button"
+                className="epm-search-row"
+                onClick={() => onSelect(result)}
+              >
+                <span className="epm-search-row__body">
+                  <span className="epm-search-row__label">{result.label}</span>
+                  <span className="epm-search-row__trail">{trail}</span>
+                </span>
+                <ChevronRight size={16} className="epm-search-row__chevron" />
+              </button>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 // ── Tool sub-component ──
@@ -644,6 +1438,8 @@ function ToolsPage({
   extensionGroups,
   editTools,
   onToolToggle,
+  openCategoryId,
+  onOpenCategoryConsumed,
 }: {
   extensionGroups: Array<{
     extension: {
@@ -660,6 +1456,8 @@ function ToolsPage({
   }>;
   editTools: string[];
   onToolToggle: (key: string) => void;
+  openCategoryId?: string | null;
+  onOpenCategoryConsumed?: () => void;
 }) {
   const [modalExt, setModalExt] = useState<{
     id: string;
@@ -667,6 +1465,22 @@ function ToolsPage({
     description: string;
     toolKeys: string[];
   } | null>(null);
+
+  useEffect(() => {
+    if (!openCategoryId) return;
+    const match = extensionGroups.find(
+      ({ extension }) => extension.manifest.id === openCategoryId,
+    );
+    if (match) {
+      setModalExt({
+        id: match.extension.manifest.id,
+        name: match.extension.manifest.name,
+        description: match.extension.manifest.description,
+        toolKeys: match.toolKeys,
+      });
+    }
+    onOpenCategoryConsumed?.();
+  }, [openCategoryId, extensionGroups, onOpenCategoryConsumed]);
 
   return (
     <>
@@ -1505,8 +2319,8 @@ function RopeScalingPage({
           lineHeight: 1.5,
         }}
       >
-        Extend the effective context length using RoPE scaling or YaRN.
-        Settings equal to the server defaults are left unset.
+        Extend the effective context length using RoPE scaling or YaRN. Settings
+        equal to the server defaults are left unset.
       </p>
 
       <div className="epm-section">
@@ -1514,7 +2328,7 @@ function RopeScalingPage({
           content={[
             'RoPE (Rotary Position Embedding) encodes token positions using rotation matrices, which the model learns during training.',
             'RoPE scaling stretches those rotations so the model can reason beyond the context length it was trained on, at the cost of some accuracy.',
-            "linear: stretches positions uniformly across the full context. Simple and predictable, but degrades sooner at very long contexts.",
+            'linear: stretches positions uniformly across the full context. Simple and predictable, but degrades sooner at very long contexts.',
             'yarn: YaRN (Yet another RoPE extensioN) re-calibrates the rotations and adds temperature smoothing, keeping quality high at much longer contexts.',
             "'model default' leaves the model's built-in setting untouched.",
           ]}
@@ -2730,9 +3544,7 @@ function PerformancePage({
               <Zap size={18} />
             </div>
             <div className="epm-section-card__body">
-              <div className="epm-section-card__title">
-                Mixture of Experts
-              </div>
+              <div className="epm-section-card__title">Mixture of Experts</div>
               <div className="epm-section-card__preview">
                 Control where MoE weights are loaded.
               </div>
@@ -3480,11 +4292,11 @@ function ServerSettingsPage({
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleCopy = useCallback(async () => {
     if (!launchArgs || launchArgs.length === 0) return;
-    const text =
-      'llama-server ' +
-      launchArgs
-        .map((a) => (a.includes(' ') || a.includes('"') ? `"${a.replace(/"/g, '\\"')}"` : a))
-        .join(' ');
+    const text = `llama-server ${launchArgs
+      .map((a) =>
+        a.includes(' ') || a.includes('"') ? `"${a.replace(/"/g, '\\"')}"` : a,
+      )
+      .join(' ')}`;
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
@@ -3557,7 +4369,9 @@ function ServerSettingsPage({
       {!editUseCustomLaunch ? (
         <>
           <div className="epm-section" style={{ marginTop: '20px' }}>
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+            <div
+              style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}
+            >
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="epm-section__label">Host</div>
                 <InfoTooltip
@@ -3683,7 +4497,9 @@ function ServerSettingsPage({
               <div className="epm-section__label" style={{ marginBottom: 0 }}>
                 Launch Arguments
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: '10px' }}
+              >
                 <button
                   type="button"
                   className={`epm-launch-args__copy ${copied ? 'epm-launch-args__copy--copied' : ''}`}
@@ -3758,12 +4574,18 @@ function ServerSettingsPage({
               value={editCustomLaunchCommand}
               onChange={(e) => setEditCustomLaunchCommand(e.target.value)}
               placeholder='llama-server --model "/path/to/model.gguf" --ctx-size 8192 --host 127.0.0.1 --port 9931 --verbose'
-              style={{ minHeight: '140px', fontFamily: 'Cascadia Code, JetBrains Mono, monospace', fontSize: '13px' }}
+              style={{
+                minHeight: '140px',
+                fontFamily: 'Cascadia Code, JetBrains Mono, monospace',
+                fontSize: '13px',
+              }}
             />
           </div>
 
           <div className="epm-section" style={{ marginTop: '20px' }}>
-            <div className="epm-section__label">Advanced Options (ignored in manual)</div>
+            <div className="epm-section__label">
+              Advanced Options (ignored in manual)
+            </div>
             <div
               style={{
                 display: 'flex',
@@ -3971,8 +4793,9 @@ function CustomFlagsPage({
         }}
       >
         Add arbitrary llama-server flags. Each row is one flag line — e.g.
-        &quot;--verbose&quot; (no value), &quot;--threads 4&quot;, or &apos;--foo &quot;bar
-        baz&quot;&apos; with quotes. Rows are appended before --metrics --no-ui.
+        &quot;--verbose&quot; (no value), &quot;--threads 4&quot;, or
+        &apos;--foo &quot;bar baz&quot;&apos; with quotes. Rows are appended
+        before --metrics --no-ui.
       </p>
 
       <div className="epm-section">
@@ -4011,7 +4834,7 @@ function CustomFlagsPage({
                   className="epm-input epm-custom-flag-input"
                   value={flag}
                   onChange={(e) => updateFlag(idx, e.target.value)}
-                  placeholder='--flag value or --verbose'
+                  placeholder="--flag value or --verbose"
                 />
                 <button
                   type="button"
@@ -4027,11 +4850,7 @@ function CustomFlagsPage({
           )}
         </div>
 
-        <button
-          type="button"
-          className="epm-custom-flag-add"
-          onClick={addFlag}
-        >
+        <button type="button" className="epm-custom-flag-add" onClick={addFlag}>
           <Plus size={16} />
           Add flag
         </button>
@@ -4064,6 +4883,16 @@ export default function EditProfileModal({
     'forward',
   );
   const [animating, setAnimating] = useState(false);
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [pageBeforeSearch, setPageBeforeSearch] = useState<string | null>(null);
+  const [pendingToolCategoryId, setPendingToolCategoryId] = useState<
+    string | null
+  >(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const trimmedSearchQuery = searchQuery.trim();
+  const isSearching = trimmedSearchQuery.length > 0;
 
   // Edit state
   const isNewProfile = profile === null;
@@ -4326,9 +5155,8 @@ export default function EditProfileModal({
   const [editUseCustomLaunch, setEditUseCustomLaunch] = useState<boolean>(
     !!profile?.useCustomLaunch,
   );
-  const [editCustomLaunchCommand, setEditCustomLaunchCommand] = useState<string>(
-    profile?.customLaunchCommand ?? '',
-  );
+  const [editCustomLaunchCommand, setEditCustomLaunchCommand] =
+    useState<string>(profile?.customLaunchCommand ?? '');
 
   // Launch arguments preview (built by the main process via chat.ts)
   const [launchArgs, setLaunchArgs] = useState<string[] | null>(null);
@@ -4431,7 +5259,9 @@ export default function EditProfileModal({
         corsCredentials: editCorsCredentials,
         customFlags: editCustomFlags.filter((s) => s.trim().length > 0),
         useCustomLaunch: editUseCustomLaunch || undefined,
-        customLaunchCommand: editUseCustomLaunch ? editCustomLaunchCommand : undefined,
+        customLaunchCommand: editUseCustomLaunch
+          ? editCustomLaunchCommand
+          : undefined,
       };
       window.electronAPI
         .getLaunchArgs(draft, {
@@ -4665,9 +5495,108 @@ export default function EditProfileModal({
     }
   };
 
+  const clearSearch = useCallback(() => {
+    setSearchQuery('');
+    setPageBeforeSearch(null);
+  }, []);
+
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!pageBeforeSearch && !isSearching) {
+        setPageBeforeSearch(currentPage);
+      }
+      searchInputRef.current?.focus();
+      return;
+    }
+    if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag !== 'INPUT' && tag !== 'TEXTAREA' && !isSearching) {
+        e.preventDefault();
+        if (!pageBeforeSearch) {
+          setPageBeforeSearch(currentPage);
+        }
+        searchInputRef.current?.focus();
+        return;
+      }
+    }
     if (e.key === 'Escape') {
+      if (showModelModal || showProjectorModal || showDraftModelModal) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') {
+        if (isSearching) {
+          e.stopPropagation();
+          clearSearch();
+        }
+        return;
+      }
+      if (isSearching) {
+        clearSearch();
+        return;
+      }
       handleSave();
+    }
+  };
+
+  // Dynamic tool/extension entries for search
+  const toolSearchEntries: SearchIndexEntry[] = useMemo(() => {
+    const entries: SearchIndexEntry[] = [];
+    extensionGroups.forEach(({ extension, toolKeys }) => {
+      const categoryName = extension.manifest.name;
+      entries.push({
+        id: `tools:category:${extension.manifest.id}`,
+        label: categoryName,
+        keywords: ['tools', 'extension', extension.manifest.description ?? ''],
+        page: 'tools',
+        categoryId: extension.manifest.id,
+      });
+      toolKeys.forEach((tk) => {
+        const meta = getToolMeta(tk);
+        if (meta) {
+          entries.push({
+            id: `tools:tool:${tk}`,
+            label: meta.label || tk,
+            keywords: [categoryName, meta.description ?? '', tk],
+            page: 'tools',
+            categoryId: extension.manifest.id,
+          });
+        }
+      });
+    });
+    return entries;
+  }, [extensionGroups]);
+
+  const searchResults: ScoredSearchResult[] = useMemo(
+    () =>
+      searchEntries(
+        [...SEARCH_INDEX, ...toolSearchEntries],
+        trimmedSearchQuery,
+      ),
+    [trimmedSearchQuery, toolSearchEntries],
+  );
+
+  const handleSearchChange = (value: string) => {
+    if (!pageBeforeSearch && !isSearching && value.trim()) {
+      setPageBeforeSearch(currentPage);
+    }
+    setSearchQuery(value);
+    if (!value.trim()) {
+      setPageBeforeSearch(null);
+    }
+  };
+
+  const handleSearchSelect = (entry: ScoredSearchResult) => {
+    if (entry.categoryId) {
+      setPendingToolCategoryId(entry.categoryId);
+    }
+    const target = entry.page;
+    setSearchQuery('');
+    setPageBeforeSearch(null);
+    if (target !== currentPage) {
+      navigateTo(target);
     }
   };
 
@@ -5012,6 +5941,16 @@ export default function EditProfileModal({
   const breadcrumb = buildBreadcrumb(currentPage);
 
   const renderPage = () => {
+    if (isSearching) {
+      return (
+        <SearchResultsPage
+          query={trimmedSearchQuery}
+          results={searchResults}
+          onSelect={handleSearchSelect}
+          onClear={clearSearch}
+        />
+      );
+    }
     switch (currentPage) {
       case 'main':
         return (
@@ -5045,6 +5984,8 @@ export default function EditProfileModal({
             extensionGroups={extensionGroups}
             editTools={editTools}
             onToolToggle={handleToolToggle}
+            openCategoryId={pendingToolCategoryId}
+            onOpenCategoryConsumed={() => setPendingToolCategoryId(null)}
           />
         );
       case 'advanced':
@@ -5303,21 +6244,61 @@ export default function EditProfileModal({
         {/* Header */}
         <div className="epm-header">
           <div className="epm-header-left">
-            {currentPage !== 'main' && (
+            {isSearching ? (
               <button
                 type="button"
                 className="epm-back-btn"
-                onClick={() => {
-                  const info = BREADCRUMB_MAP[currentPage];
-                  if (info?.parent) navigateTo(info.parent);
-                }}
-                aria-label="Go back"
+                onClick={clearSearch}
+                aria-label="Back to settings"
               >
                 <ChevronLeft size={16} />
                 Back
               </button>
+            ) : (
+              currentPage !== 'main' && (
+                <button
+                  type="button"
+                  className="epm-back-btn"
+                  onClick={() => {
+                    const info = BREADCRUMB_MAP[currentPage];
+                    if (info?.parent) navigateTo(info.parent);
+                  }}
+                  aria-label="Go back"
+                >
+                  <ChevronLeft size={16} />
+                  Back
+                </button>
+              )
             )}
             <h2>{isNewProfile ? 'New Profile' : 'Edit Profile'}</h2>
+          </div>
+          <div className="epm-search-wrap" role="search">
+            <Search size={15} className="epm-search-icon" aria-hidden="true" />
+            <input
+              ref={searchInputRef}
+              type="search"
+              className="epm-search-input"
+              placeholder="Search settings…  (Ctrl+K)"
+              aria-label="Search settings"
+              value={searchQuery}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.stopPropagation();
+                  clearSearch();
+                }
+              }}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                className="epm-search-clear"
+                onClick={clearSearch}
+                aria-label="Clear search"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
           <div className="epm-header-actions">
             <button
@@ -5333,30 +6314,60 @@ export default function EditProfileModal({
 
         {/* Breadcrumb */}
         <div className="epm-breadcrumb">
-          {breadcrumb.map((crumb, idx) => (
-            <span
-              key={crumb.key}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-            >
-              {idx > 0 && <span className="epm-breadcrumb__sep">›</span>}
-              <button
-                type="button"
-                className={`epm-breadcrumb__item${
-                  idx === breadcrumb.length - 1
-                    ? ' epm-breadcrumb__item--current'
-                    : ' epm-breadcrumb__item--clickable'
-                }`}
-                onClick={() => {
-                  if (idx < breadcrumb.length - 1) {
-                    navigateTo(crumb.key);
-                  }
-                }}
-                disabled={idx === breadcrumb.length - 1}
+          {isSearching ? (
+            <>
+              <span
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
               >
-                {crumb.label}
-              </button>
-            </span>
-          ))}
+                <button
+                  type="button"
+                  className="epm-breadcrumb__item epm-breadcrumb__item--clickable"
+                  onClick={clearSearch}
+                >
+                  {(pageBeforeSearch &&
+                    BREADCRUMB_MAP[pageBeforeSearch]?.label) ||
+                    'Profile'}
+                </button>
+              </span>
+              <span
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                <span className="epm-breadcrumb__sep">›</span>
+                <button
+                  type="button"
+                  className="epm-breadcrumb__item epm-breadcrumb__item--current"
+                  disabled
+                >
+                  Search: &ldquo;{trimmedSearchQuery}&rdquo;
+                </button>
+              </span>
+            </>
+          ) : (
+            breadcrumb.map((crumb, idx) => (
+              <span
+                key={crumb.key}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                {idx > 0 && <span className="epm-breadcrumb__sep">›</span>}
+                <button
+                  type="button"
+                  className={`epm-breadcrumb__item${
+                    idx === breadcrumb.length - 1
+                      ? ' epm-breadcrumb__item--current'
+                      : ' epm-breadcrumb__item--clickable'
+                  }`}
+                  onClick={() => {
+                    if (idx < breadcrumb.length - 1) {
+                      navigateTo(crumb.key);
+                    }
+                  }}
+                  disabled={idx === breadcrumb.length - 1}
+                >
+                  {crumb.label}
+                </button>
+              </span>
+            ))
+          )}
         </div>
 
         {/* Page content */}
