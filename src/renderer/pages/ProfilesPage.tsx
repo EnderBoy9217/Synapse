@@ -659,7 +659,7 @@ export default function ProfilesPage() {
                             </span>
                           )}
                         </div>
-                        <p className="sp-card__model">
+                        <div className="sp-card__model">
                           <strong>Model:</strong>{' '}
                           {profile.modelFilename ? (
                             <InfoTooltip
@@ -675,7 +675,7 @@ export default function ProfilesPage() {
                               No Model Selected
                             </span>
                           )}
-                        </p>
+                        </div>
                         {/* ── Tool badges (grouped by extension) ── */}
                         {profile.tools &&
                           profile.tools.length > 0 &&
