@@ -5,6 +5,11 @@ import fsSync from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { app } from 'electron';
+import {
+  sanitizePath as sanitizeHostPath,
+  normalizePath as normalizeHostPath,
+  validatePath as validateHostPath,
+} from './fileSystem';
 
 const execFileAsync = promisify(execFile);
 
@@ -1508,6 +1513,172 @@ export async function sandboxListDirectory(
   } catch (err: any) {
     return { success: false, error: err.message || String(err) };
   }
+}
+
+// ── Copy from host into sandbox (docker cp) ─────────────────────
+
+export interface CopyIntoResult {
+  success: boolean;
+  hostPath?: string;
+  sandboxPath?: string;
+  containerName?: string;
+  isDirectory?: boolean;
+  error?: string;
+}
+
+function validateSandboxPosixPath(raw: string): string {
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    throw new Error('sandbox_path must be a non-empty string');
+  }
+  let p = raw.trim();
+  if (p.includes('\0')) {
+    throw new Error('Invalid sandbox path: contains null byte');
+  }
+  // Resolve relative paths against /workspace for convenience
+  if (!path.posix.isAbsolute(p)) {
+    p = path.posix.join('/workspace', p);
+  }
+  const normalized = path.posix.normalize(p);
+  if (!normalized || normalized === '.' || normalized === '') {
+    throw new Error('Invalid sandbox path after normalization');
+  }
+  const finalPath = path.posix.isAbsolute(normalized)
+    ? normalized
+    : `/${normalized}`;
+  return finalPath;
+}
+
+export async function sandboxCopyInto(
+  hostPathRaw: string,
+  sandboxPathRaw: string,
+  containerName?: string,
+): Promise<CopyIntoResult> {
+  const env = getActiveEnvironment(containerName);
+  if (!env) {
+    return {
+      success: false,
+      error:
+        'No active sandbox environment. Create one with sandbox_environment_create first.',
+    };
+  }
+
+  // ── Host path validation ─────────────────────────────────────
+  let resolvedHost: string;
+  try {
+    if (typeof hostPathRaw !== 'string' || hostPathRaw.trim() === '') {
+      throw new Error('host_path must be a non-empty string');
+    }
+    const sanitized = sanitizeHostPath(hostPathRaw);
+    resolvedHost = normalizeHostPath(sanitized);
+    validateHostPath(resolvedHost);
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
+
+  // Existence check
+  try {
+    await fs.access(resolvedHost);
+  } catch {
+    return { success: false, error: `Host path not found: ${resolvedHost}` };
+  }
+
+  let isDirectory = false;
+  try {
+    const stat = fsSync.statSync(resolvedHost);
+    isDirectory = stat.isDirectory();
+  } catch (err: any) {
+    // Fallback to async stat if sync fails (e.g. permissions)
+    try {
+      const s = await fs.stat(resolvedHost);
+      isDirectory = s.isDirectory();
+    } catch (e: any) {
+      return { success: false, error: e.message || String(e) };
+    }
+  }
+
+  // ── Sandbox path validation ──────────────────────────────────
+  let normalizedSandbox: string;
+  try {
+    normalizedSandbox = validateSandboxPosixPath(sandboxPathRaw);
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
+
+  const bin = getDockerBin();
+
+  // Ensure parent directory exists inside container (best-effort).
+  // For both files and directories we create parent of destination;
+  // docker cp will create the final component itself.
+  const parentDir = path.posix.dirname(normalizedSandbox);
+  if (parentDir && parentDir !== '.' && parentDir !== '/') {
+    try {
+      await execFileAsync(
+        bin,
+        ['exec', env.containerName, 'mkdir', '-p', '--', parentDir],
+        { timeout: 10000 },
+      );
+    } catch (err: any) {
+      const msg = err.message || String(err);
+      // If container does not exist, surface immediately
+      if (
+        msg.includes('No such container') ||
+        msg.includes('No such exec') ||
+        msg.toLowerCase().includes('no such container')
+      ) {
+        return {
+          success: false,
+          hostPath: resolvedHost,
+          sandboxPath: normalizedSandbox,
+          containerName: env.containerName,
+          error: msg,
+        };
+      }
+      // Otherwise (container stopped, mkdir fails) we continue — docker cp
+      // works on stopped containers and will create missing path via tar extraction.
+      // Log for debugging but don't fail.
+      console.warn(
+        `[sandbox] mkdir -p "${parentDir}" in ${env.containerName} failed (continuing to cp): ${msg}`,
+      );
+    }
+  } else if (parentDir === '/') {
+    // Root already exists, nothing to do
+  } else {
+    // Fallback: ensure at least /workspace exists (should already)
+    try {
+      await execFileAsync(
+        bin,
+        ['exec', env.containerName, 'mkdir', '-p', '--', '/workspace'],
+        { timeout: 10000 },
+      );
+    } catch {}
+  }
+
+  // ── Perform docker cp ────────────────────────────────────────
+  try {
+    await execFileAsync(
+      bin,
+      ['cp', resolvedHost, `${env.containerName}:${normalizedSandbox}`],
+      { timeout: 120000, maxBuffer: 100 * 1024 },
+    );
+  } catch (err: any) {
+    const stderr = err.stderr || err.message || String(err);
+    return {
+      success: false,
+      hostPath: resolvedHost,
+      sandboxPath: normalizedSandbox,
+      containerName: env.containerName,
+      isDirectory,
+      error: stderr,
+    };
+  }
+
+  return {
+    success: true,
+    hostPath: resolvedHost,
+    sandboxPath: normalizedSandbox,
+    containerName: env.containerName,
+    isDirectory,
+  };
 }
 
 // ── Status ──────────────────────────────────────────────────────

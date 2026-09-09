@@ -39,7 +39,7 @@ export function getMaxReadSize(): number {
   return maxReadSize;
 }
 
-function sanitizePath(raw: string): string {
+export function sanitizePath(raw: string): string {
   const sanitized = raw.replace(/[}{"';`]/g, '').trim();
   if (sanitized === '') {
     throw new Error('Invalid path: empty after sanitization');
@@ -47,7 +47,7 @@ function sanitizePath(raw: string): string {
   return sanitized;
 }
 
-function normalizePath(inputPath: string): string {
+export function normalizePath(inputPath: string): string {
   const placeholderMap: Record<string, string> = {
     root: os.homedir(),
     '~': os.homedir(),
@@ -75,7 +75,7 @@ function normalizePath(inputPath: string): string {
   return inputPath;
 }
 
-function validatePath(filePath: string): void {
+export function validatePath(filePath: string): void {
   if (allowedDirectories.length === 0) return;
   const resolvedPath = path.resolve(filePath);
   for (const allowedDir of allowedDirectories) {

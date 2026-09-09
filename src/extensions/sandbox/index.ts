@@ -15,6 +15,7 @@ import {
   sandboxListDirectory,
   getSandboxStatus,
   renameSandboxEnvironment,
+  sandboxCopyInto,
 } from '../../main/functions/sandboxRunner';
 import manifest from './manifest.json';
 
@@ -568,6 +569,73 @@ export const tools: Record<string, ExtensionToolDef> = {
     },
     async handler(params: { path: string }) {
       return await sandboxListDirectory(params.path);
+    },
+  },
+
+  sandbox_copy_into: {
+    meta: {
+      name: 'sandbox_copy_into',
+      label: 'Copy Into Sandbox',
+      description:
+        'Copy a file or directory from the host filesystem into the sandbox container.',
+      descriptionForModel:
+        'Copy a file or directory from the HOST filesystem into the active sandbox container via `docker cp`. Binary-safe and supports recursive directory copies.\n' +
+        '\n' +
+        'PURPOSE — use this tool to:\n' +
+        '  • Import existing host files (code, data, config, images) into the isolated sandbox\n' +
+        '  • Seed the sandbox with a project directory before building/testing inside it\n' +
+        '  • Copy host datasets or assets needed for sandbox execution\n' +
+        '\n' +
+        'HOST PATH HANDLING (same as filesystem tools):\n' +
+        '  • `host_path` is on the HOST — supports absolute paths, `~`, `~` expansion, and placeholders (`desktop`, `documents`, `downloads`, `.`, `cwd`, `home`, `root`). Relative paths resolve against the configured hostDirectory.\n' +
+        '  • Validated against File System Settings → allowedDirectories if configured — returns error if outside allowed roots.\n' +
+        '  • Must exist; can be a single file or a directory (copied recursively).\n' +
+        '\n' +
+        'SANDBOX PATH HANDLING:\n' +
+        '  • `sandbox_path` is absolute POSIX inside the container (e.g., `/workspace/data/report.pdf`). Relative paths are resolved against `/workspace`.\n' +
+        '  • Parent directories are created automatically via `mkdir -p` (best-effort); docker cp then creates the final file/dir.\n' +
+        '  • If host_path is a file and sandbox_path is an existing directory, the file is copied inside that directory.\n' +
+        '  • If host_path is a directory and sandbox_path does not exist, it is created as a copy of the source directory. If sandbox_path already exists as a directory, the source directory is copied *inside* it (docker cp semantics).\n' +
+        '\n' +
+        'REQUIREMENTS:\n' +
+        '  • An active sandbox environment must exist (create with sandbox_environment_create).\n' +
+        '  • Works regardless of network isolation (docker cp does not need container networking).\n' +
+        '  • Overwrites existing files at the destination.\n' +
+        '\n' +
+        'RETURNS: { success, hostPath, sandboxPath, containerName, isDirectory } on success, or { success: false, error }.',
+      icon: 'Upload',
+    },
+    params: {
+      type: 'object',
+      properties: {
+        host_path: {
+          type: 'string',
+          description:
+            'Path on the HOST filesystem to copy from (file or directory). Supports `~` and placeholders; relative paths resolve against hostDirectory. Must be within allowedDirectories if set.',
+        },
+        sandbox_path: {
+          type: 'string',
+          description:
+            'Destination path INSIDE the sandbox container (e.g., /workspace/project/file.txt or /workspace/data). Absolute preferred; relative resolves against /workspace. Parent dirs created automatically.',
+        },
+        container_name: {
+          type: 'string',
+          description:
+            'Optional container name to target (defaults to the most recently created/active sandbox).',
+        },
+      },
+      required: ['host_path', 'sandbox_path'],
+    },
+    async handler(params: {
+      host_path: string;
+      sandbox_path: string;
+      container_name?: string;
+    }) {
+      return await sandboxCopyInto(
+        params.host_path,
+        params.sandbox_path,
+        params.container_name,
+      );
     },
   },
 
