@@ -4353,7 +4353,6 @@ export default function ChatPage() {
 
   const handleRestoreSession = useCallback(
     async (sessionId: string) => {
-      if (modelLoading || loadError) return;
       const view = await window.electronAPI.chatGetSession(sessionId);
       if (!view) return;
 
@@ -4423,13 +4422,7 @@ export default function ChatPage() {
       setSources(sessionId, view.session.sources ?? []);
       // collapsed state is handled by effects (per-session)
     },
-    [
-      modelLoading,
-      loadError,
-      setSources,
-      drainTypewriterQueue,
-      drainToolTypewriterQueue,
-    ],
+    [setSources, drainTypewriterQueue, drainToolTypewriterQueue],
   );
 
   const handleNewChat = useCallback(async () => {
