@@ -63,6 +63,15 @@ export function sessionsToMarkdown(
         lines.push('');
         return;
       }
+      if (seg.type === 'thought' && seg.text && seg.text.trim()) {
+        lines.push('### Began Thinking');
+        lines.push('');
+        lines.push(seg.text.trim());
+        lines.push('');
+        lines.push('### Ended Thinking');
+        lines.push('');
+        return;
+      }
       if (seg.text && seg.text.trim()) {
         lines.push(seg.text.trim());
         lines.push('');
