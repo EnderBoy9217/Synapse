@@ -152,11 +152,18 @@
   border: 1px solid var(--border);
   background: transparent;
   transition: all 0.15s ease;
+  cursor: pointer;
+  outline: none;
 }
 
 .sessions-sidebar__item:hover {
   background: var(--bg-hover);
   border-color: var(--accent);
+}
+
+.sessions-sidebar__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .sessions-sidebar__item--active {
@@ -175,12 +182,8 @@
   align-items: center;
   gap: 10px;
   padding: 2px 4px 2px 2px;
-  background: transparent;
-  border: none;
   color: var(--text-primary);
-  cursor: pointer;
   text-align: left;
-  font-family: inherit;
 }
 
 .sessions-sidebar__item-icon {

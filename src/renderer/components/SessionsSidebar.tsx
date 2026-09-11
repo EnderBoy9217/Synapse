@@ -212,6 +212,18 @@ function SessionsSidebar({
                   <div
                     key={session.id}
                     className={`sessions-sidebar__item${session.id === activeSessionId ? ' sessions-sidebar__item--active' : ''}`}
+                    role="button"
+                    tabIndex={renamingId === session.id ? -1 : 0}
+                    onClick={() => {
+                      if (renamingId !== session.id) onOpen(session.id);
+                    }}
+                    onKeyDown={(e) => {
+                      if (renamingId !== session.id && (e.key === 'Enter' || e.key === ' ')) {
+                        e.preventDefault();
+                        onOpen(session.id);
+                      }
+                    }}
+                    title={session.title || 'Untitled session'}
                   >
                     {renamingId === session.id ? (
                       <form
@@ -236,12 +248,7 @@ function SessionsSidebar({
                       </form>
                     ) : (
                       <>
-                        <button
-                          type="button"
-                          className="sessions-sidebar__item-main"
-                          onClick={() => onOpen(session.id)}
-                          title={session.title || 'Untitled session'}
-                        >
+                        <div className="sessions-sidebar__item-main">
                           <div className="sessions-sidebar__item-icon">
                             {streamingSessionIds.has(session.id) ? (
                               <Loader2
@@ -268,12 +275,15 @@ function SessionsSidebar({
                               })()}
                             </span>
                           </div>
-                        </button>
+                        </div>
                         <div className="sessions-sidebar__item-actions">
                           <button
                             type="button"
                             className={`sessions-sidebar__item-action${session.pinned ? ' sessions-sidebar__item-action--pinned' : ''}`}
-                            onClick={() => togglePin(session)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              togglePin(session);
+                            }}
                             title={session.pinned ? 'Unpin' : 'Pin'}
                             aria-label={
                               session.pinned ? 'Unpin session' : 'Pin session'
@@ -287,7 +297,10 @@ function SessionsSidebar({
                           <button
                             type="button"
                             className="sessions-sidebar__item-action"
-                            onClick={() => startRename(session)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              startRename(session);
+                            }}
                             title="Rename"
                             aria-label="Rename session"
                           >
@@ -296,7 +309,10 @@ function SessionsSidebar({
                           <button
                             type="button"
                             className="sessions-sidebar__item-action"
-                            onClick={() => exportSession(session)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              exportSession(session);
+                            }}
                             title="Export as Markdown"
                             aria-label="Export session as Markdown"
                           >
@@ -305,7 +321,10 @@ function SessionsSidebar({
                           <button
                             type="button"
                             className={`sessions-sidebar__item-action${confirmDeleteId === session.id ? ' sessions-sidebar__item-action--confirm' : ''}`}
-                            onClick={() => handleDeleteClick(session.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteClick(session.id);
+                            }}
                             title={
                               confirmDeleteId === session.id
                                 ? 'Click again to confirm'
