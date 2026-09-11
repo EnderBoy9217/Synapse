@@ -137,7 +137,7 @@ export const tools: Record<string, ExtensionToolDef> = {
       name: 'edit_file',
       label: 'Edit File',
       description:
-        'Modify file content with text replacements, supporting dry-run mode',
+        'Modify file content with text replacements or append, supporting dry-run mode. If oldText is omitted or empty, newText is appended.',
       icon: 'Edit',
     },
     params: {
@@ -149,11 +149,17 @@ export const tools: Record<string, ExtensionToolDef> = {
           items: {
             type: 'object',
             properties: {
-              oldText: { type: 'string' },
+              oldText: {
+                type: 'string',
+                description:
+                  'Text to find and replace. If omitted, null, or empty string, newText is appended to the file.',
+              },
               newText: { type: 'string' },
             },
+            required: ['newText'],
           },
-          description: 'Array of text replacements to apply',
+          description:
+            'Array of text replacements to apply (oldText → newText). If oldText is omitted or empty, newText is appended.',
         },
         dryRun: {
           type: 'boolean',
@@ -164,7 +170,7 @@ export const tools: Record<string, ExtensionToolDef> = {
     },
     async handler(params: {
       path: string;
-      edits: Array<{ oldText: string; newText: string }>;
+      edits: Array<{ oldText?: string; newText: string }>;
       dryRun?: boolean;
     }) {
       return await editFile(params);

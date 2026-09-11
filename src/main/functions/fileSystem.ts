@@ -109,14 +109,38 @@ function generateDiff(oldText: string, newText: string): string {
   const oldLines = oldText.split('\n');
   const newLines = newText.split('\n');
   const diffs: string[] = [];
-  const maxLines = Math.max(oldLines.length, newLines.length);
-  for (let i = 0; i < maxLines; i++) {
-    const oldLine = oldLines[i] ?? '';
-    const newLine = newLines[i] ?? '';
-    if (oldLine !== newLine) {
-      if (oldLine) diffs.push(`- ${oldLine}`);
-      if (newLine) diffs.push(`+ ${newLine}`);
+  let i = 0;
+  let j = 0;
+  while (i < oldLines.length || j < newLines.length) {
+    const oldLine = oldLines[i];
+    const newLine = newLines[j];
+    if (i < oldLines.length && j < newLines.length && oldLine === newLine) {
+      i++;
+      j++;
+      continue;
     }
+    if (
+      j + 1 < newLines.length &&
+      i < oldLines.length &&
+      oldLine === newLines[j + 1]
+    ) {
+      if (newLine) diffs.push(`+ ${newLine}`);
+      j++;
+      continue;
+    }
+    if (
+      i + 1 < oldLines.length &&
+      j < newLines.length &&
+      oldLines[i + 1] === newLine
+    ) {
+      if (oldLine) diffs.push(`- ${oldLine}`);
+      i++;
+      continue;
+    }
+    if (i < oldLines.length && oldLine) diffs.push(`- ${oldLine}`);
+    if (j < newLines.length && newLine) diffs.push(`+ ${newLine}`);
+    if (i < oldLines.length) i++;
+    if (j < newLines.length) j++;
   }
   return diffs.length > 0 ? diffs.join('\n') : '(no changes)';
 }
@@ -286,28 +310,67 @@ export async function writeFile(params: {
 
 export async function editFile(params: {
   path: string;
-  edits: Array<{ oldText: string; newText: string }>;
+  edits: Array<{ oldText?: string; newText: string }>;
   dryRun?: boolean;
 }): Promise<string> {
   try {
     const p = normalizePath(sanitizePath(params.path));
     validatePath(p);
-    if (!existsSync(p)) throw new Error(`File not found: ${p}`);
-    let content = await fs.readFile(p, 'utf-8');
-    const originalContent = content;
-    for (const edit of params.edits) {
-      if (!content.includes(edit.oldText))
-        throw new Error(`Old text not found in file: ${edit.oldText}`);
-      content = content.replace(edit.oldText, edit.newText);
+    const hasAppend = params.edits.some(
+      (e: any) => e.oldText == null || e.oldText === '',
+    );
+    let content: string;
+    let originalContent: string;
+    if (existsSync(p)) {
+      content = await fs.readFile(p, 'utf-8');
+      originalContent = content;
+    } else {
+      if (hasAppend) {
+        originalContent = '';
+        content = '';
+      } else {
+        throw new Error(`File not found: ${p}`);
+      }
+    }
+    for (let i = 0; i < params.edits.length; i++) {
+      const edit = params.edits[i] as any;
+      if (typeof edit?.newText !== 'string') {
+        throw new Error(`Edit ${i}: newText must be a string`);
+      }
+      if (
+        edit.oldText != null &&
+        edit.oldText !== '' &&
+        typeof edit.oldText !== 'string'
+      ) {
+        throw new Error(`Edit ${i}: oldText must be a string if provided`);
+      }
+      const oldText = edit.oldText;
+      const isAppend = oldText == null || oldText === '';
+      if (isAppend) {
+        content += edit.newText;
+        continue;
+      }
+      if (!content.includes(oldText))
+        throw new Error(`Old text not found in file: ${oldText}`);
+      content = content.replace(oldText, edit.newText);
     }
     const diff = generateDiff(originalContent, content);
-    if (!params.dryRun) await fs.writeFile(p, content, 'utf-8');
+    if (!params.dryRun) {
+      const dirPath = path.dirname(p);
+      if (!existsSync(dirPath)) await fs.mkdir(dirPath, { recursive: true });
+      await fs.writeFile(p, content, 'utf-8');
+    }
+    const isAppendOperation = hasAppend;
     const result = {
       dryRun: params.dryRun ?? false,
       diff,
       message: params.dryRun
-        ? 'DRY RUN: Changes not applied'
-        : 'File edited successfully',
+        ? isAppendOperation
+          ? 'DRY RUN: File would be apended'
+          : 'DRY RUN: Changes not applied'
+        : isAppendOperation
+          ? 'File apended successfully'
+          : 'File edited successfully',
     };
     return JSON.stringify(result);
   } catch (error) {

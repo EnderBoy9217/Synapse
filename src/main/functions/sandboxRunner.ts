@@ -1229,11 +1229,24 @@ export async function sandboxReadFile(
   const env = getActiveEnvironment(containerName);
   if (!env) return { success: false, error: 'No active sandbox environment.' };
 
+  if (typeof filePath !== 'string' || filePath.trim() === '') {
+    return { success: false, error: 'filePath must be a non-empty string' };
+  }
+  if (filePath.includes('\0')) {
+    return { success: false, error: 'Invalid filePath: contains null byte' };
+  }
+  let normalizedPath: string;
+  try {
+    normalizedPath = validateSandboxPosixPath(filePath);
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
+
   const bin = getDockerBin();
   try {
     const result = await execFileAsync(
       bin,
-      ['exec', env.containerName, 'cat', '--', filePath],
+      ['exec', env.containerName, 'cat', '--', normalizedPath],
       { timeout: 10000, maxBuffer: 100 * 1024 },
     );
 
@@ -1248,6 +1261,42 @@ export async function sandboxReadFile(
     return { success: true, content: result.stdout };
   } catch (err: any) {
     return { success: false, error: err.message || String(err) };
+  }
+}
+
+async function sandboxReadFileRaw(
+  filePath: string,
+  containerName?: string,
+): Promise<FileReadResult> {
+  const env = getActiveEnvironment(containerName);
+  if (!env) return { success: false, error: 'No active sandbox environment.' };
+
+  if (typeof filePath !== 'string' || filePath.trim() === '') {
+    return { success: false, error: 'filePath must be a non-empty string' };
+  }
+  if (filePath.includes('\0')) {
+    return { success: false, error: 'Invalid filePath: contains null byte' };
+  }
+  let normalizedPath: string;
+  try {
+    normalizedPath = validateSandboxPosixPath(filePath);
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
+
+  const bin = getDockerBin();
+  try {
+    const result = await execFileAsync(
+      bin,
+      ['exec', env.containerName, 'cat', '--', normalizedPath],
+      { timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
+    );
+
+    if (result.stderr && !result.stdout)
+      return { success: false, error: result.stderr };
+    return { success: true, content: result.stdout };
+  } catch (err: any) {
+    return { success: false, error: err.stderr || err.message || String(err) };
   }
 }
 
@@ -1276,7 +1325,20 @@ export async function sandboxReadImageAsDataUrl(
   const env = getActiveEnvironment(containerName);
   if (!env) return { success: false, error: 'No active sandbox environment.' };
 
-  const mimeType = IMAGE_MIME_TYPES[path.extname(filePath).toLowerCase()];
+  if (typeof filePath !== 'string' || filePath.trim() === '') {
+    return { success: false, error: 'filePath must be a non-empty string' };
+  }
+  if (filePath.includes('\0')) {
+    return { success: false, error: 'Invalid filePath: contains null byte' };
+  }
+  let normalizedPath: string;
+  try {
+    normalizedPath = validateSandboxPosixPath(filePath);
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
+
+  const mimeType = IMAGE_MIME_TYPES[path.extname(normalizedPath).toLowerCase()];
   if (!mimeType) {
     return {
       success: false,
@@ -1288,7 +1350,7 @@ export async function sandboxReadImageAsDataUrl(
   try {
     const { stdout } = await execFileAsync(
       bin,
-      ['exec', env.containerName, 'base64', filePath],
+      ['exec', env.containerName, 'base64', normalizedPath],
       { timeout: 30000, maxBuffer: 200 * 1024 * 1024 },
     );
     const base64 = stdout.replace(/\s+/g, '');
@@ -1306,14 +1368,39 @@ function generateDiff(oldText: string, newText: string): string {
   const oldLines = oldText.split('\n');
   const newLines = newText.split('\n');
   const diffs: string[] = [];
-  const maxLines = Math.max(oldLines.length, newLines.length);
-  for (let i = 0; i < maxLines; i++) {
-    const oldLine = oldLines[i] ?? '';
-    const newLine = newLines[i] ?? '';
-    if (oldLine !== newLine) {
-      if (oldLine) diffs.push(`- ${oldLine}`);
-      if (newLine) diffs.push(`+ ${newLine}`);
+  let i = 0;
+  let j = 0;
+  while (i < oldLines.length || j < newLines.length) {
+    const oldLine = oldLines[i];
+    const newLine = newLines[j];
+    if (i < oldLines.length && j < newLines.length && oldLine === newLine) {
+      i++;
+      j++;
+      continue;
     }
+    // Look-ahead to detect single-line insertion/deletion
+    if (
+      j + 1 < newLines.length &&
+      i < oldLines.length &&
+      oldLine === newLines[j + 1]
+    ) {
+      if (newLine) diffs.push(`+ ${newLine}`);
+      j++;
+      continue;
+    }
+    if (
+      i + 1 < oldLines.length &&
+      j < newLines.length &&
+      oldLines[i + 1] === newLine
+    ) {
+      if (oldLine) diffs.push(`- ${oldLine}`);
+      i++;
+      continue;
+    }
+    if (i < oldLines.length && oldLine) diffs.push(`- ${oldLine}`);
+    if (j < newLines.length && newLine) diffs.push(`+ ${newLine}`);
+    if (i < oldLines.length) i++;
+    if (j < newLines.length) j++;
   }
   return diffs.length > 0 ? diffs.join('\n') : '(no changes)';
 }
@@ -1327,7 +1414,7 @@ export interface FileEditResult {
 
 export async function sandboxEditFile(params: {
   filePath: string;
-  edits: Array<{ oldText: string; newText: string }>;
+  edits: Array<{ oldText?: string; newText: string }>;
   dryRun?: boolean;
   containerName?: string;
 }): Promise<FileEditResult> {
@@ -1341,6 +1428,15 @@ export async function sandboxEditFile(params: {
     if (typeof params.filePath !== 'string' || params.filePath === '') {
       return { success: false, error: 'filePath must be a non-empty string' };
     }
+    if (params.filePath.includes('\0')) {
+      return { success: false, error: 'Invalid filePath: contains null byte' };
+    }
+    let normalizedFilePath: string;
+    try {
+      normalizedFilePath = validateSandboxPosixPath(params.filePath);
+    } catch (err: any) {
+      return { success: false, error: err.message || String(err) };
+    }
     if (!Array.isArray(params.edits) || params.edits.length === 0) {
       return {
         success: false,
@@ -1348,61 +1444,71 @@ export async function sandboxEditFile(params: {
           'edits must be a non-empty array of { oldText, newText } objects',
       };
     }
-    const readResult = await sandboxReadFile(
-      params.filePath,
-      params.containerName,
-    );
-    if (!readResult.success || readResult.content === undefined) {
-      return {
-        success: false,
-        error: readResult.error || `File not found: ${params.filePath}`,
-      };
-    }
-
-    const originalContent = readResult.content;
-
     for (let i = 0; i < params.edits.length; i++) {
-      const edit = params.edits[i];
-      if (typeof edit.oldText !== 'string' || edit.oldText === '') {
-        return {
-          success: false,
-          error: `Edit ${i}: oldText must be a non-empty string`,
-        };
-      }
-      if (typeof edit.newText !== 'string') {
+      const edit = params.edits[i] as any;
+      if (typeof edit?.newText !== 'string') {
         return { success: false, error: `Edit ${i}: newText must be a string` };
       }
-      const origMatches = originalContent.split(edit.oldText);
-      const origCount = origMatches.length - 1;
-      if (origCount === 0) {
+      if (
+        edit.oldText != null &&
+        edit.oldText !== '' &&
+        typeof edit.oldText !== 'string'
+      ) {
         return {
           success: false,
-          error: `Edit ${i}: oldText not found in file: ${edit.oldText}`,
-        };
-      }
-      if (origCount > 1) {
-        return {
-          success: false,
-          error: `Edit ${i}: oldText matches multiple times (${origCount}) in file, model must be more specific: ${edit.oldText}`,
+          error: `Edit ${i}: oldText must be a string if provided`,
         };
       }
     }
 
-    let content = originalContent;
+    const hasAppend = params.edits.some(
+      (e: any) => e.oldText == null || e.oldText === '',
+    );
 
-    for (const edit of params.edits) {
-      const matches = content.split(edit.oldText);
+    const readResult = await sandboxReadFileRaw(
+      normalizedFilePath,
+      params.containerName,
+    );
+    let originalContent: string;
+    let content: string;
+    if (readResult.success && readResult.content !== undefined) {
+      originalContent = readResult.content;
+      content = originalContent;
+    } else {
+      const isNotFound =
+        /no such file/i.test(readResult.error || '') ||
+        /file not found/i.test(readResult.error || '');
+      if (isNotFound && hasAppend) {
+        originalContent = '';
+        content = '';
+      } else {
+        return {
+          success: false,
+          error: readResult.error || `File not found: ${params.filePath}`,
+        };
+      }
+    }
+
+    for (let i = 0; i < params.edits.length; i++) {
+      const edit = params.edits[i] as any;
+      const oldText: string | undefined = edit.oldText;
+      const isAppend = oldText == null || oldText === '';
+      if (isAppend) {
+        content += edit.newText;
+        continue;
+      }
+      const matches = content.split(oldText);
       const matchCount = matches.length - 1;
       if (matchCount === 0) {
         return {
           success: false,
-          error: `Edit failed: oldText no longer exists in file after applying previous edits: ${edit.oldText}`,
+          error: `Edit ${i}: oldText not found in file: ${oldText}`,
         };
       }
       if (matchCount > 1) {
         return {
           success: false,
-          error: `Edit failed: previous edits caused oldText to match multiple times (${matchCount}) in file: ${edit.oldText}`,
+          error: `Edit ${i}: oldText matches multiple times (${matchCount}) in file, model must be more specific: ${oldText}`,
         };
       }
       content = matches.join(edit.newText);
@@ -1412,7 +1518,7 @@ export async function sandboxEditFile(params: {
 
     if (!params.dryRun) {
       const writeResult = await sandboxWriteFile(
-        params.filePath,
+        normalizedFilePath,
         content,
         params.containerName,
       );
@@ -1424,12 +1530,17 @@ export async function sandboxEditFile(params: {
       }
     }
 
+    const isAppendOperation = hasAppend;
     return {
       success: true,
       diff,
       message: params.dryRun
-        ? 'DRY RUN: Changes not applied'
-        : 'File edited successfully',
+        ? isAppendOperation
+          ? 'DRY RUN: File would be apended'
+          : 'DRY RUN: Changes not applied'
+        : isAppendOperation
+          ? 'File apended successfully'
+          : 'File edited successfully',
     };
   } catch (err: any) {
     return { success: false, error: err.message || String(err) };
@@ -1449,9 +1560,30 @@ export async function sandboxWriteFile(
       error: 'No active sandbox environment.',
     };
 
+  if (typeof filePath !== 'string' || filePath.trim() === '') {
+    return {
+      success: false,
+      path: filePath,
+      error: 'filePath must be a non-empty string',
+    };
+  }
+  if (filePath.includes('\0')) {
+    return {
+      success: false,
+      path: filePath,
+      error: 'Invalid filePath: contains null byte',
+    };
+  }
+  let normalizedPath: string;
+  try {
+    normalizedPath = validateSandboxPosixPath(filePath);
+  } catch (err: any) {
+    return { success: false, path: filePath, error: err.message || String(err) };
+  }
+
   const bin = getDockerBin();
   try {
-    const dir = path.posix.dirname(filePath);
+    const dir = path.posix.dirname(normalizedPath);
     await execFileAsync(
       bin,
       ['exec', env.containerName, 'mkdir', '-p', '--', dir],
@@ -1466,20 +1598,22 @@ export async function sandboxWriteFile(
         env.containerName,
         'sh',
         '-c',
-        `cat > '${filePath.replace(/'/g, "'\\''")}'`,
+        'cat > "$1"',
+        'sh',
+        normalizedPath,
       ],
       content,
-      10000,
+      30000,
     );
 
     if (result.exitCode !== 0 && result.exitCode !== null) {
       return {
         success: false,
-        path: filePath,
+        path: normalizedPath,
         error: result.stderr || `Exit code ${result.exitCode}`,
       };
     }
-    return { success: true, path: filePath };
+    return { success: true, path: normalizedPath };
   } catch (err: any) {
     return {
       success: false,
@@ -1496,11 +1630,24 @@ export async function sandboxListDirectory(
   const env = getActiveEnvironment(containerName);
   if (!env) return { success: false, error: 'No active sandbox environment.' };
 
+  if (typeof dirPath !== 'string' || dirPath.trim() === '') {
+    return { success: false, error: 'dirPath must be a non-empty string' };
+  }
+  if (dirPath.includes('\0')) {
+    return { success: false, error: 'Invalid dirPath: contains null byte' };
+  }
+  let normalizedPath: string;
+  try {
+    normalizedPath = validateSandboxPosixPath(dirPath);
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
+
   const bin = getDockerBin();
   try {
     const result = await execFileAsync(
       bin,
-      ['exec', env.containerName, 'ls', '-1a', '--', dirPath],
+      ['exec', env.containerName, 'ls', '-1a', '--', normalizedPath],
       { timeout: 10000 },
     );
 

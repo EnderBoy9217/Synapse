@@ -483,7 +483,7 @@ export const tools: Record<string, ExtensionToolDef> = {
       name: 'sandbox_edit_file',
       label: 'Edit Sandbox File',
       description:
-        'Modify a file inside the sandbox container with text replacements, supporting dry-run mode.',
+        'Modify a file inside the sandbox container with text replacements, supporting dry-run mode. If oldText is omitted or empty, newText is appended to the file.',
       descriptionForModel:
         'Apply a set of text replacements to a file inside the sandbox container. Reads the file, applies each edit (oldText → newText), and writes the result back.\n' +
         '\n' +
@@ -491,18 +491,23 @@ export const tools: Record<string, ExtensionToolDef> = {
         '  • Make targeted edits to files in the sandbox without rewriting the entire file\n' +
         '  • Apply multiple changes in a single operation (edits are applied sequentially)\n' +
         '  • Preview changes with dryRun=true before writing\n' +
+        '  • Append content by omitting oldText or passing empty string\n' +
         '\n' +
         'HOW IT WORKS:\n' +
-        '  1. Reads the file at the specified path from inside the sandbox\n' +
-        '  2. For each edit in the edits array, finds oldText and replaces it with newText\n' +
+        '  1. Reads the file at the specified path from inside the sandbox (if file does not exist and edits are append-only, starts from empty)\n' +
+        '  2. For each edit in the edits array:\n' +
+        '     - if oldText is provided and non-empty: finds oldText and replaces it with newText (exactly once)\n' +
+        '     - if oldText is omitted, null, or empty string: appends newText to the end of the file\n' +
         '  3. If dryRun is true, returns the diff without modifying the file\n' +
         '  4. If dryRun is false (default), writes the modified content back to the file\n' +
         '\n' +
         'NOTES:\n' +
         '  • Edits are applied sequentially in the order provided\n' +
-        '  • Each oldText must exist exactly once in the current content (or the remaining content after previous edits)\n' +
+        '  • Each non-empty oldText must exist exactly once in the current content (or the remaining content after previous edits)\n' +
+        '  • Append edits (empty oldText) always succeed and add to end\n' +
         '  • The diff output shows old lines prefixed with "-" and new lines prefixed with "+"\n' +
-        '  • Files are inside the container only — no host filesystem access',
+        '  • Files are inside the container only — no host filesystem access\n' +
+        '  • When any edit is an append, success message is "File apended successfully" (versus "File edited successfully" for replacements)',
       icon: 'Edit',
     },
     params: {
@@ -518,12 +523,17 @@ export const tools: Record<string, ExtensionToolDef> = {
           items: {
             type: 'object',
             properties: {
-              oldText: { type: 'string' },
+              oldText: {
+                type: 'string',
+                description:
+                  'Text to find and replace. If omitted, null, or empty string, newText is appended to the file.',
+              },
               newText: { type: 'string' },
             },
+            required: ['newText'],
           },
           description:
-            'Array of text replacements to apply (oldText → newText, applied sequentially).',
+            'Array of text replacements to apply (oldText → newText, applied sequentially). If oldText is omitted or empty, newText is appended.',
         },
         dryRun: {
           type: 'boolean',
@@ -535,7 +545,7 @@ export const tools: Record<string, ExtensionToolDef> = {
     },
     async handler(params: {
       path: string;
-      edits: Array<{ oldText: string; newText: string }>;
+      edits: Array<{ oldText?: string; newText: string }>;
       dryRun?: boolean;
     }) {
       return await sandboxEditFile({
